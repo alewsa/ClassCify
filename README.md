@@ -1,6 +1,7 @@
 Language Design Proposal: ClassCify
 
 Student Name(s): Alyssa Andres, Aram Boyrazian, and John Arcilla
+
 Language Name: ClassCify (name is based from the goal which is to use C and implement a Java-like language with classes)
 
 Target Language: C
