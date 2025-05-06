@@ -1,0 +1,21 @@
+(class MyClass
+  (vardec Int x)
+  (vardec Boolean flag)
+  (method method () Void
+    (vardec Int y)
+    (= y (+ (- 10 5) (* 2 3) (/ 8 2)))
+    (if (< y 20)
+      (return (println y)))
+    (return))
+  (init ()
+    (super)))
+
+(vardec MyClass obj)
+(= obj (new MyClass))
+(call obj method)
+
+(= flag true)
+(if (== flag true)
+  (println 1))
+
+println@oops
