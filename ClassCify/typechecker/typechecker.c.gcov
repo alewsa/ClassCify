@@ -1,0 +1,198 @@
+        -:    0:Source:typechecker.c
+        -:    0:Graph:typechecker.gcno
+        -:    0:Data:typechecker.gcda
+        -:    0:Runs:1
+        -:    0:Programs:1
+        -:    1:#include "typechecker.h"
+        -:    2:#include "../parser/parser.h"
+        -:    3:#include <stdio.h>
+        -:    4:#include <stdlib.h>
+        -:    5:#include <string.h>
+        -:    6:#include <ctype.h>
+        -:    7:
+        -:    8:// --- Type definitions ---
+        -:    9:typedef enum { TYPE_INT, TYPE_BOOLEAN, TYPE_VOID, TYPE_CLASS } TypeKind;
+        -:   10:
+        -:   11:typedef struct {
+        -:   12:    TypeKind kind;
+        -:   13:    char *class_name;   // only for TYPE_CLASS
+        -:   14:} Type;
+        -:   15:
+        -:   16:// Simple linked list symbol‐table entries:
+        -:   17:typedef struct VarEntry {
+        -:   18:    char          *name;
+        -:   19:    Type           type;
+        -:   20:    struct VarEntry *next;
+        -:   21:} VarEntry;
+        -:   22:
+        -:   23:typedef struct {
+        -:   24:    VarEntry *vars;
+        -:   25:} SymTable;
+        -:   26:
+        -:   27:// --- Symbol table helpers ---
+        1:   28:static SymTable *create_table() {
+        1:   29:    SymTable *t = malloc(sizeof *t);
+        1:   30:    t->vars = NULL;
+        1:   31:    return t;
+        -:   32:}
+        -:   33:
+        1:   34:static void free_table(SymTable *t) {
+        1:   35:    VarEntry *e = t->vars;
+        4:   36:    while (e) {
+        2:   37:        VarEntry *nx = e->next;
+        2:   38:        free(e->name);
+        2:   39:        free(e);
+        2:   40:        e = nx;
+        -:   41:    }
+        1:   42:    free(t);
+        1:   43:}
+        -:   44:
+        2:   45:static void add_variable(SymTable *t, const char *name, Type ty) {
+        2:   46:    VarEntry *e = malloc(sizeof *e);
+        2:   47:    e->name = strdup(name);
+        2:   48:    e->type = ty;
+        2:   49:    e->next = t->vars;
+        2:   50:    t->vars = e;
+        2:   51:}
+        -:   52:
+       13:   53:static int lookup_variable(SymTable *t, const char *name, Type *out) {
+       21:   54:    for (VarEntry *e = t->vars; e; e = e->next) {
+       21:   55:        if (strcmp(e->name, name) == 0) {
+       13:   56:            *out = e->type;
+       13:   57:            return 1;
+        -:   58:        }
+        -:   59:    }
+    #####:   60:    return 0;
+        -:   61:}
+        -:   62:
+        -:   63:// --- Error reporting ---
+    #####:   64:static void error(const char *msg, ASTNode *n) {
+    #####:   65:    fprintf(stderr, "Type error at node '%s': %s\n", n->label, msg);
+    #####:   66:    exit(EXIT_FAILURE);
+        -:   67:}
+        -:   68:
+        -:   69:// --- Type constructors ---
+       14:   70:static Type make_type(TypeKind k, const char *cls) {
+        -:   71:    Type t;
+       14:   72:    t.kind = k;
+       14:   73:    t.class_name = cls ? strdup(cls) : NULL;
+       14:   74:    return t;
+        -:   75:}
+        -:   76:
+        -:   77:// Map a type‐name ASTNode to our Type
+        2:   78:static Type astnode_to_type(ASTNode *n) {
+        2:   79:    if      (strcmp(n->label, "Int")     == 0) return make_type(TYPE_INT,     NULL);
+        1:   80:    else if (strcmp(n->label, "Boolean") == 0) return make_type(TYPE_BOOLEAN, NULL);
+    #####:   81:    else if (strcmp(n->label, "Void")    == 0) return make_type(TYPE_VOID,    NULL);
+    #####:   82:    else                                       return make_type(TYPE_CLASS,   n->label);
+        -:   83:}
+        -:   84:
+        -:   85:// Forward decls:
+        -:   86:static Type  infer_exp (ASTNode *n, SymTable *tbl);
+        -:   87:static void  typecheck_stmt(ASTNode *n, SymTable *tbl, Type ret_t);
+        -:   88:
+        -:   89:// --- Expression inference ---
+       18:   90:static Type infer_exp(ASTNode *n, SymTable *tbl) {
+        -:   91:    // Integer literal?
+       18:   92:    if (isdigit((unsigned char)n->label[0])) {
+        6:   93:        return make_type(TYPE_INT, NULL);
+        -:   94:    }
+        -:   95:    // Variable reference?
+       12:   96:    if (isalpha((unsigned char)n->label[0]) && !strstr(n->label, ":")) {
+        -:   97:        Type t;
+        7:   98:        if (lookup_variable(tbl, n->label, &t)) return t;
+    #####:   99:        error("Undefined variable", n);
+        -:  100:    }
+        -:  101:    // Arithmetic operators:
+        8:  102:    if (!strcmp(n->label, "+") || !strcmp(n->label, "-") ||
+        6:  103:        !strcmp(n->label, "*") || !strcmp(n->label, "/"))
+        -:  104:    {
+        3:  105:        Type A = infer_exp(n->kids[0], tbl);
+        3:  106:        Type B = infer_exp(n->kids[1], tbl);
+        3:  107:        if (A.kind!=TYPE_INT || B.kind!=TYPE_INT)
+    #####:  108:            error("Arithmetic requires Int", n);
+        3:  109:        return make_type(TYPE_INT, NULL);
+        -:  110:    }
+        -:  111:    // Comparison:
+        2:  112:    if (!strcmp(n->label, "<") || !strcmp(n->label, "==")) {
+        2:  113:        Type A = infer_exp(n->kids[0], tbl);
+        2:  114:        Type B = infer_exp(n->kids[1], tbl);
+        2:  115:        if (A.kind!=TYPE_INT || B.kind!=TYPE_INT)
+    #####:  116:            error("Comparison requires Int", n);
+        2:  117:        return make_type(TYPE_BOOLEAN, NULL);
+        -:  118:    }
+        -:  119:    // Println:
+    #####:  120:    if (!strcmp(n->label, "Println")) {
+    #####:  121:        Type A = infer_exp(n->kids[0], tbl);
+    #####:  122:        if (A.kind!=TYPE_INT)
+    #####:  123:            error("println expects Int", n);
+    #####:  124:        return make_type(TYPE_VOID, NULL);
+        -:  125:    }
+        -:  126:
+    #####:  127:    error("Unsupported expression", n);
+    #####:  128:    return make_type(TYPE_VOID, NULL);
+        -:  129:}
+        -:  130:
+        -:  131:// --- Statement checking ---
+       12:  132:static void typecheck_stmt(ASTNode *n, SymTable *tbl, Type ret_t) {
+       12:  133:    if (!strcmp(n->label, "VarDec")) {
+        2:  134:        Type ty = astnode_to_type(n->kids[0]);
+        2:  135:        add_variable(tbl, n->kids[1]->label, ty);
+        2:  136:        return;
+        -:  137:    }
+       10:  138:    if (!strcmp(n->label, "Assign")) {
+        -:  139:        Type L;
+        6:  140:        if (!lookup_variable(tbl, n->kids[0]->label, &L))
+    #####:  141:            error("Assign to undeclared var", n);
+        6:  142:        Type R = infer_exp(n->kids[1], tbl);
+       12:  143:        if (L.kind!=R.kind ||
+        6:  144:           (L.kind==TYPE_CLASS && strcmp(L.class_name,R.class_name)))
+    #####:  145:            error("Type mismatch in assignment", n);
+        6:  146:        return;
+        -:  147:    }
+        4:  148:    if (!strcmp(n->label, "If")) {
+        1:  149:        Type C = infer_exp(n->kids[0], tbl);
+        1:  150:        if (C.kind!=TYPE_BOOLEAN) error("If cond must be Boolean", n);
+        1:  151:        typecheck_stmt(n->kids[1], tbl, ret_t);
+        1:  152:        if (n->kid_count==3) typecheck_stmt(n->kids[2], tbl, ret_t);
+        1:  153:        return;
+        -:  154:    }
+        3:  155:    if (!strcmp(n->label, "While")) {
+        1:  156:        Type C = infer_exp(n->kids[0], tbl);
+        1:  157:        if (C.kind!=TYPE_BOOLEAN) error("While cond must be Boolean", n);
+        3:  158:        for (int i=1;i<n->kid_count;i++)
+        2:  159:            typecheck_stmt(n->kids[i], tbl, ret_t);
+        1:  160:        return;
+        -:  161:    }
+        2:  162:    if (!strcmp(n->label, "Return")) {
+        1:  163:        if (n->kid_count==1) {
+    #####:  164:            Type R = infer_exp(n->kids[0], tbl);
+    #####:  165:            if (R.kind!=ret_t.kind) error("Return type mismatch", n);
+        -:  166:        } else {
+        1:  167:            if (ret_t.kind!=TYPE_VOID) error("Missing return value", n);
+        -:  168:        }
+        1:  169:        return;
+        -:  170:    }
+        1:  171:    if (!strcmp(n->label, "StmtList")) {
+        8:  172:        for (int i=0;i<n->kid_count;i++)
+        7:  173:            typecheck_stmt(n->kids[i], tbl, ret_t);
+        1:  174:        return;
+        -:  175:    }
+        -:  176:    // other stmt‐types: skip or extend here
+        -:  177:}
+        -:  178:
+        -:  179:// --- Entry point ---
+        1:  180:void typecheck_program(ASTNode *root) {
+        1:  181:    for (int i=0;i<root->kid_count;i++) {
+        1:  182:        ASTNode *c = root->kids[i];
+        1:  183:        if (!strcmp(c->label, "StmtList")) {
+        1:  184:            SymTable *tbl = create_table();
+        1:  185:            Type void_t = make_type(TYPE_VOID, NULL);
+        1:  186:            typecheck_stmt(c, tbl, void_t);
+        1:  187:            free_table(tbl);
+        1:  188:            printf("Type checking passed.\n");
+        1:  189:            return;
+        -:  190:        }
+        -:  191:    }
+    #####:  192:    printf("No statements to typecheck.\n");
+        -:  193:}
