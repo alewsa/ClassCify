@@ -1,13 +1,45 @@
-( vardec Int x )
-( = x 5 )
-( vardec Boolean b )
-( = b (== x 10) )
-( if b
-    ( = x (+ x 1) )
-    ( = x (- x 1) )
+(class Animal () 
+  (init ()) 
+  (method speak () Void 
+    (return (println 0))
+  )
 )
-( while b
-    ( = x (/ x 2) )
-    ( = b (< x 1) )
+
+(class Cat Animal () 
+  (init () (super)) 
+  (method speak () Void 
+    (return (println 1))
+  )
 )
-( return )
+
+(class Dog Animal () 
+  (init () (super)) 
+  (method speak () Void 
+    (return (println 2))
+  )
+)
+
+(vardec Animal cat)
+(vardec Animal dog)
+(= cat (new Cat))
+(= dog (new Dog))
+(call cat speak)
+(call dog speak)
+
+(vardec Int x)
+(= x 5)
+
+(vardec Boolean b)
+(= b (== x 10))
+
+(if b
+  ( = x (+ x 1) )
+  ( = x (- x 1) )
+)
+
+(while b
+  ( = x (/ x 2) )
+  ( = b (< x 1) )
+)
+
+(return)
