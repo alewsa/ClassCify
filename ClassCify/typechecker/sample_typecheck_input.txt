@@ -1,26 +1,34 @@
-(class Animal () 
-  (init ()) 
-  (method speak () Void 
-    (return (println 0))
-  )
+(class Animal ()
+    (init ())
+    (method speak () Void
+        (return (println 0))
+    )
+    (method getAge () Int
+        (vardec Int age)
+        (= age 5)
+        (return age)
+    )
 )
 
-(class Cat Animal () 
-  (init () (super)) 
-  (method speak () Void 
-    (return (println 1))
-  )
+(class Cat Animal ()
+    (init () (super))
+    (method speak () Void
+        (return (println 1))
+    )
 )
 
-(class Dog Animal () 
-  (init () (super)) 
-  (method speak () Void 
-    (return (println 2))
-  )
+(class Dog Animal ()
+    (init () (super))
+    (method speak () Void
+        (return (println 2))
+    )
+    (method doNothing () Void
+        (return)
+    )
 )
 
 (vardec Animal cat)
-(vardec Animal dog)
+(vardec Dog dog)
 (= cat (new Cat))
 (= dog (new Dog))
 (call cat speak)
@@ -33,13 +41,18 @@
 (= b (== x 10))
 
 (if b
-  ( = x (+ x 1) )
-  ( = x (- x 1) )
+    (= x (+ x 1))
+    (= x (- x 1))
 )
 
 (while b
-  ( = x (/ x 2) )
-  ( = b (< x 1) )
+    (= x (/ x 2))
+    (= b (< x 1))
 )
+
+(vardec Int z)
+(= z (call cat getAge))
+
+(call dog doNothing)
 
 (return)

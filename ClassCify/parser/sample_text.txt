@@ -1,17 +1,46 @@
-(class MyClass
-    ((vardec Int x)
-        (vardec Boolean flag))
-    (init ()
-        (super))
-    (method doIt () Void
-        (vardec Int y)
-        (= y (+
-                (+ (-10 5)
-                    (*2 3))
-                (/ 8 2)))
-        (if (< y 20)
-            (return (println y)))
-        (return)))
-(vardec MyClass obj)
-(= obj (new MyClass))
-(call obj doIt)
+(class Animal
+  ()
+  (init ()
+    (vardec Int age)
+    (= age 5))
+  (method speak () Void
+    (return (println 0)))
+  (method isOld () Boolean
+    (return (< age 10))))
+
+(class Cat Animal
+  ()
+  (init ()
+    (super)
+    (vardec Boolean sleepy)
+    (= sleepy true))
+  (method speak () Void
+    (return (println 1)))
+  (method sleepTime () Int
+    (return (+ 7 2))))
+
+(class Dog Animal
+  ()
+  (init ()
+    (super)
+    (vardec Int barkCount)
+    (= barkCount 3))
+  (method speak () Void
+    (return (println 2)))
+  (method bark () Void
+    (while true
+      (println barkCount)
+      break)))
+
+(vardec Animal cat)
+(vardec Animal dog)
+(= cat (new Cat))
+(= dog (new Dog))
+(call cat speak)
+(call dog speak)
+(call dog bark)
+(println (call cat sleepTime))
+(if (call cat isOld)
+  (println 1)
+  (println 0))
+(return)
