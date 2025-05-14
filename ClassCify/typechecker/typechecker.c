@@ -4,32 +4,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 // Type definitions
 typedef enum { TYPE_INT, TYPE_BOOLEAN, TYPE_VOID, TYPE_CLASS } TypeKind;
 typedef struct {
     TypeKind kind;
-    char *class_name;   // for TYPE_CLASS
+    char    *class_name;   // for TYPE_CLASS
 } Type;
 
 // Method/constructor signature
 typedef struct {
-    int    param_count;
-    Type  *param_types;   // array of length param_count
-    Type   return_type;   // for methods; for ctors, use TYPE_VOID
+    int     param_count;
+    Type   *param_types;   // array of length param_count
+    Type    return_type;   // for methods; for ctors, use TYPE_VOID
 } MethodSig;
 
 // Class inheritance environment
 typedef struct ClassEntry {
     char *name;
-    char *superclass;
+    char *superclass;      // NULL if none
     struct ClassEntry *next;
 } ClassEntry;
 
 // Method signature environment
 typedef struct MethodEntry {
-    char *class_name;
-    char *method_name;    // method name or "<ctor>"
+    char     *class_name;
+    char     *method_name; // method name or "<ctor>"
     MethodSig sig;
     struct MethodEntry *next;
 } MethodEntry;
@@ -85,8 +86,8 @@ static void add_method_sig(const char *cls, const char *mname, MethodSig sig) {
 // Find a method signature
 static int find_method(const char *cls, const char *mname, MethodSig *out) {
     for (MethodEntry *e = method_list; e; e = e->next) {
-        if (strcmp(e->class_name, cls)==0
-         && strcmp(e->method_name, mname)==0) {
+        if (strcmp(e->class_name, cls) == 0
+         && strcmp(e->method_name, mname) == 0) {
             *out = e->sig;
             return 1;
         }
@@ -209,18 +210,12 @@ static Type infer_exp(ASTNode *n, SymTable *tbl) {
             error("Logical '&&' and '||' require Boolean", n);
         return make_type(TYPE_BOOLEAN, NULL);
     }
-    // Print functions
+    // Print/Println function
     if (!strcmp(n->label, "Print") || !strcmp(n->label, "Println")) {
         Type A = infer_exp(n->kids[0], tbl);
         if (A.kind != TYPE_INT)
             error("print expects Int", n);
         return make_type(TYPE_VOID, NULL);
-    }
-    // Variable reference
-    if (isalpha((unsigned char)n->label[0])) {
-        Type t;
-        if (lookup_variable(tbl, n->label, &t)) return t;
-        error("Undefined variable", n);
     }
     // Arithmetic operators
     if (!strcmp(n->label, "+") || !strcmp(n->label, "-") ||
@@ -275,6 +270,15 @@ static Type infer_exp(ASTNode *n, SymTable *tbl) {
         }
         return make_type(TYPE_CLASS, cls);
     }
+
+    // Variable reference (leaf identifiers only)
+    if (n->kid_count == 0 && isalpha((unsigned char)n->label[0])) {
+        Type t;
+        if (lookup_variable(tbl, n->label, &t)) return t;
+        error("Undefined variable", n);
+    }
+
+    // nothing else matched
     error("Unsupported expression", n);
     return make_type(TYPE_VOID, NULL);
 }
@@ -351,6 +355,20 @@ static void typecheck_constructor(ASTNode *n, Type class_t) {
         if (!strcmp(kid->label, "VarDec")) {
             Type ty = astnode_to_type(kid->kids[0]);
             add_variable(tbl, kid->kids[1]->label, ty);
+        } else if (!strcmp(kid->label, "SuperCall")) {
+            ClassEntry *ce = find_class(class_t.class_name);
+            if (!ce || !ce->superclass)
+                error("Super call in class with no superclass", kid);
+            MethodSig super_ctor;
+            if (!find_constructor(ce->superclass, &super_ctor))
+                error("No matching super constructor", kid);
+            if (kid->kid_count != super_ctor.param_count)
+                error("Wrong number of arguments for super", kid);
+            for (int j=0; j<kid->kid_count; j++) {
+                Type arg_t = infer_exp(kid->kids[j], tbl);
+                if (!is_subtype(arg_t, super_ctor.param_types[j]))
+                    error("Super call argument type mismatch", kid);
+            }
         } else {
             typecheck_stmt(kid, tbl, void_t);
         }
@@ -378,35 +396,33 @@ static void typecheck_method(ASTNode *n, Type class_t) {
 // Class definition checking
 static void typecheck_classdef(ASTNode *c) {
     const char *cls = c->kids[0]->label;
-    ASTNode *supNode = c->kids[1];
-    const char *sup = NULL;
-    if (supNode->kid_count!=0 &&
-        strcmp(supNode->label,"Constructor")!=0 &&
-        strcmp(supNode->label,"VarDec")!=0)
-        sup = supNode->label;
-    for (int i=2; i<c->kid_count; i++) {
+    for (int i=1; i<c->kid_count; i++) {
         ASTNode *m = c->kids[i];
-        MethodSig sig;
         if (!strcmp(m->label, "Constructor")) {
-            int pc=0; while(pc<m->kid_count && !strcmp(m->kids[pc]->label,"VarDec")) pc++;
+            int pc = 0;
+            while (pc < m->kid_count && !strcmp(m->kids[pc]->label, "VarDec"))
+                pc++;
+            MethodSig sig;
             sig.param_count = pc;
             sig.param_types = malloc(pc * sizeof(Type));
             for (int j=0; j<pc; j++)
                 sig.param_types[j] = astnode_to_type(m->kids[j]->kids[0]);
-            sig.return_type = make_type(TYPE_VOID,NULL);
+            sig.return_type = make_type(TYPE_VOID, NULL);
             add_method_sig(cls, "<ctor>", sig);
             typecheck_constructor(m, make_type(TYPE_CLASS, cls));
-        }
-        else if (!strcmp(m->label, "Method")) {
-            int pc=0;
-            while(pc<m->kid_count && !strcmp(m->kids[pc]->label,"VarDec")) pc++;
+        } else if (!strcmp(m->label, "VarDec") || m->kid_count == 0) {
+            // skip fields or standalone superclass
+            continue;
+        } else {
+            int pc = 0;
+            while (pc < m->kid_count && !strcmp(m->kids[pc]->label, "VarDec")) pc++;
+            MethodSig sig;
             sig.param_count = pc;
             sig.param_types = malloc(pc * sizeof(Type));
             for (int j=0; j<pc; j++)
                 sig.param_types[j] = astnode_to_type(m->kids[j]->kids[0]);
             sig.return_type = astnode_to_type(m->kids[pc]);
-            // method_name extraction may vary by parser
-            add_method_sig(cls, m->kids[pc]->label, sig);
+            add_method_sig(cls, m->label, sig);
             typecheck_method(m, make_type(TYPE_CLASS, cls));
         }
     }
@@ -415,21 +431,17 @@ static void typecheck_classdef(ASTNode *c) {
 // Program entry point
 void typecheck_program(ASTNode *root) {
     int i = 0;
-    int found_stmts = 0;    // track if there's any StmtList
-
     // Register classes
     while (i < root->kid_count && !strcmp(root->kids[i]->label, "ClassDef")) {
         ASTNode *c = root->kids[i++];
         const char *cls = c->kids[0]->label;
         ASTNode *supNode = c->kids[1];
         const char *sup = NULL;
-        if (supNode->kid_count != 0 &&
-            strcmp(supNode->label, "Constructor") != 0 &&
-            strcmp(supNode->label, "VarDec") != 0)
+        if (strcmp(supNode->label, "VarDec") != 0 &&
+            strcmp(supNode->label, "Constructor") != 0)
             sup = supNode->label;
         register_class(cls, sup);
     }
-
     // Typecheck classes
     for (int j = 0; j < i; j++)
         typecheck_classdef(root->kids[j]);
@@ -437,20 +449,23 @@ void typecheck_program(ASTNode *root) {
     // Check main statements
     SymTable *main_tbl = create_table();
     Type void_t = make_type(TYPE_VOID, NULL);
+
+    bool found_stmts = false;
     while (i < root->kid_count) {
         if (!strcmp(root->kids[i]->label, "StmtList")) {
-            found_stmts = 1;                // we have statements
+            found_stmts = true;
             typecheck_stmt(root->kids[i], main_tbl, void_t);
             break;
         }
         i++;
     }
 
+    free_table(main_tbl);
+
     if (!found_stmts) {
         // no statements to typecheck
         printf("No statements to typecheck.\n");
     }
 
-    free_table(main_tbl);
     printf("Type checking passed.\n");
 }
