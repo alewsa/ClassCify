@@ -1,0 +1,147 @@
+        -:    0:Source:tokenizer/tokenizer.c
+        -:    0:Graph:tokenizer.gcno
+        -:    0:Data:tokenizer.gcda
+        -:    0:Runs:1
+        -:    0:Programs:1
+        -:    1:#include "tokenizer.h"
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <ctype.h>
+        -:    5:#include <stdio.h>
+        -:    6:
+        -:    7:typedef struct
+        -:    8:{
+        -:    9:    const char *keyword;
+        -:   10:    TokenKind kind;
+        -:   11:} KeywordMap;
+        -:   12:
+        -:   13:static KeywordMap reserved_keywords[] = {
+        -:   14:    {"Int", TOKEN_INT}, {"Boolean", TOKEN_BOOL}, {"Void", TOKEN_VOID}, {"this", TOKEN_THIS}, {"true", TOKEN_TRUE}, {"false", TOKEN_FALSE}, {"new", TOKEN_NEW}, {"vardec", TOKEN_VARDEC}, {"while", TOKEN_WHILE}, {"break", TOKEN_BREAK}, {"println", TOKEN_PRINT}, {"if", TOKEN_IF}, {"return", TOKEN_RETURN}, {"init", TOKEN_INIT}, {"super", TOKEN_SUPER}, {"class", TOKEN_CLASS}, {"method", TOKEN_METHOD}, {"call", TOKEN_CALL}, {NULL, TOKEN_UNKNOWN}};
+        -:   15:
+      114:   16:static Token make_token(TokenKind kind, const char *start, int length)
+        -:   17:{
+        -:   18:    Token token;
+      114:   19:    token.kind = kind;
+      114:   20:    token.value = (char *)malloc(length + 1);
+      114:   21:    strncpy(token.value, start, length);
+      114:   22:    token.value[length] = '\0';
+      114:   23:    return token;
+        -:   24:}
+        -:   25:
+      114:   26:void free_token(Token *token)
+        -:   27:{
+      114:   28:    if (token->value)
+      114:   29:        free(token->value);
+      114:   30:    token->value = NULL;
+      114:   31:}
+        -:   32:
+        1:   33:void init_tokenizer(Tokenizer *tokenizer, const char *input)
+        -:   34:{
+        1:   35:    tokenizer->input = input;
+        1:   36:    tokenizer->position = 0;
+        1:   37:}
+        -:   38:
+      115:   39:bool has_more_tokens(Tokenizer *tokenizer)
+        -:   40:{
+      115:   41:    return tokenizer->input[tokenizer->position] != '\0';
+        -:   42:}
+        -:   43:
+      114:   44:static void skip_whitespace(Tokenizer *tokenizer)
+        -:   45:{
+      325:   46:    while (isspace(tokenizer->input[tokenizer->position]))
+        -:   47:    {
+       97:   48:        tokenizer->position++;
+        -:   49:    }
+      114:   50:}
+        -:   51:
+       41:   52:static TokenKind match_keyword(const char *start, int length)
+        -:   53:{
+      557:   54:    for (int i = 0; reserved_keywords[i].keyword != NULL; i++)
+        -:   55:    {
+      567:   56:        if (strncmp(start, reserved_keywords[i].keyword, length) == 0 &&
+       26:   57:            strlen(reserved_keywords[i].keyword) == length)
+        -:   58:        {
+       25:   59:            return reserved_keywords[i].kind;
+        -:   60:        }
+        -:   61:    }
+       16:   62:    return TOKEN_IDENTIFIER;
+        -:   63:}
+        -:   64:
+      114:   65:Token next_token(Tokenizer *tokenizer)
+        -:   66:{
+      114:   67:    skip_whitespace(tokenizer);
+      114:   68:    const char *src = tokenizer->input + tokenizer->position;
+        -:   69:
+      114:   70:    if (isalpha(*src))
+        -:   71:    {
+       41:   72:        const char *start = src;
+      259:   73:        while (isalnum(*src))
+      177:   74:            src++;
+       41:   75:        int length = src - start;
+       41:   76:        TokenKind kind = match_keyword(start, length);
+       41:   77:        tokenizer->position += length;
+       41:   78:        return make_token(kind, start, length);
+        -:   79:    }
+       73:   80:    else if (isdigit(*src))
+        -:   81:    {
+        8:   82:        const char *start = src;
+       26:   83:        while (isdigit(*src))
+       10:   84:            src++;
+        8:   85:        int length = src - start;
+        8:   86:        tokenizer->position += length;
+        8:   87:        return make_token(TOKEN_INT_LITERAL, start, length);
+        -:   88:    }
+        -:   89:    else
+        -:   90:    {
+       65:   91:        switch (*src)
+        -:   92:        {
+        -:   93:        case '(':
+       27:   94:            tokenizer->position++;
+       27:   95:            return make_token(TOKEN_LPAREN, src, 1);
+        -:   96:        case ')':
+       27:   97:            tokenizer->position++;
+       27:   98:            return make_token(TOKEN_RPAREN, src, 1);
+        -:   99:        case '{':
+    #####:  100:            tokenizer->position++;
+    #####:  101:            return make_token(TOKEN_LBRACE, src, 1);
+        -:  102:        case '}':
+    #####:  103:            tokenizer->position++;
+    #####:  104:            return make_token(TOKEN_RBRACE, src, 1);
+        -:  105:        case '.':
+    #####:  106:            tokenizer->position++;
+    #####:  107:            return make_token(TOKEN_DOT, src, 1);
+        -:  108:        case '+':
+        1:  109:            tokenizer->position++;
+        1:  110:            return make_token(TOKEN_PLUS, src, 1);
+        -:  111:        case '-':
+        1:  112:            tokenizer->position++;
+        1:  113:            return make_token(TOKEN_MINUS, src, 1);
+        -:  114:        case '*':
+        1:  115:            tokenizer->position++;
+        1:  116:            return make_token(TOKEN_MULT, src, 1);
+        -:  117:        case '/':
+        1:  118:            tokenizer->position++;
+        1:  119:            return make_token(TOKEN_DIV, src, 1);
+        -:  120:        case '<':
+        1:  121:            tokenizer->position++;
+        1:  122:            return make_token(TOKEN_LESSTHAN, src, 1);
+        -:  123:        case ';':
+    #####:  124:            tokenizer->position++;
+    #####:  125:            return make_token(TOKEN_SEMICOLON, src, 1);
+        -:  126:        case '=':
+        4:  127:            if (*(src + 1) == '=')
+        -:  128:            {
+        1:  129:                tokenizer->position += 2;
+        1:  130:                return make_token(TOKEN_EQUALS, src, 2);
+        -:  131:            }
+        -:  132:            else
+        -:  133:            {
+        3:  134:                tokenizer->position++;
+        3:  135:                return make_token(TOKEN_SINGLE_EQUALS, src, 1);
+        -:  136:            }
+        -:  137:        default:
+        2:  138:            tokenizer->position++;
+        2:  139:            return make_token(TOKEN_UNKNOWN, src, 1);
+        -:  140:        }
+        -:  141:    }
+        -:  142:}
