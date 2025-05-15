@@ -1,0 +1,21 @@
+(class MyClass
+  (
+    (vardec Int x)
+    (vardec Boolean flag)
+  )
+  (init ()
+    (super)
+  )
+  (method doIt () Void
+    (vardec Int y)
+    (= y (+ (- 10 5) (* 2 3)))
+    (if (< y 20)
+      (println y)
+    )
+    (return)
+  )
+)
+
+(vardec MyClass obj)
+(= obj (new MyClass))
+(call obj doIt)
