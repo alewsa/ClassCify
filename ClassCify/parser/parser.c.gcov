@@ -1,0 +1,449 @@
+        -:    0:Source:parser/parser.c
+        -:    0:Graph:parser.gcno
+        -:    0:Data:parser.gcda
+        -:    0:Runs:1
+        -:    0:Programs:1
+        -:    1:#include "parser.h"
+        -:    2:#include <stdio.h>
+        -:    3:#include <stdlib.h>
+        -:    4:#include <string.h>
+        -:    5:#include <stdbool.h>
+        -:    6:
+        -:    7:// Global tokenizer and current token
+        -:    8:Tokenizer tokenizer;
+        -:    9:static Token current;
+        -:   10:
+        -:   11:// AST helpers
+      103:   12:ASTNode *new_node(const char *label) {
+      103:   13:    ASTNode *n = malloc(sizeof(ASTNode));
+      103:   14:    n->label     = strdup(label);
+      103:   15:    n->kid_count = 0;
+      103:   16:    n->kids      = NULL;
+      103:   17:    return n;
+        -:   18:}
+      102:   19:void add_child(ASTNode *parent, ASTNode *child) {
+      102:   20:    parent->kids = realloc(parent->kids, sizeof(ASTNode*) * (parent->kid_count + 1));
+      102:   21:    parent->kids[parent->kid_count++] = child;
+      102:   22:}
+      103:   23:void free_ast(ASTNode *node) {
+      103:   24:    if (!node) return;
+      205:   25:    for (int i = 0; i < node->kid_count; i++) {
+      102:   26:        free_ast(node->kids[i]);
+        -:   27:    }
+      103:   28:    free(node->kids);
+      103:   29:    free(node->label);
+      103:   30:    free(node);
+        -:   31:}
+      103:   32:void print_ast(ASTNode *node, int indent) {
+      103:   33:    if (!node) return;
+      103:   34:    for (int i = 0; i < indent; i++) putchar(' ');
+      103:   35:    printf("%s\n", node->label);
+      205:   36:    for (int i = 0; i < node->kid_count; i++) {
+      102:   37:        print_ast(node->kids[i], indent + 2);
+        -:   38:    }
+        -:   39:}
+        -:   40:
+        -:   41:// Token handling
+      264:   42:static void next_token_safe() {
+      264:   43:    free_token(&current);
+      264:   44:    if (has_more_tokens(&tokenizer)) {
+      263:   45:        current = next_token(&tokenizer);
+        -:   46:    } else {
+        1:   47:        current.kind  = TOKEN_UNKNOWN;
+        1:   48:        current.value = NULL;
+        -:   49:    }
+      264:   50:}
+    #####:   51:static void parse_error(const char *msg) {
+    #####:   52:    fprintf(stderr, "Parse error at token '%s': %s\n",
+    #####:   53:            current.value ? current.value : "(null)", msg);
+    #####:   54:    exit(EXIT_FAILURE);
+        -:   55:}
+      135:   56:static void expect(TokenKind kind, const char *what) {
+      135:   57:    if (current.kind != kind) parse_error(what);
+      135:   58:    next_token_safe();
+      135:   59:}
+        -:   60:
+        -:   61:// Forward declarations
+        -:   62:ASTNode *parse_program();
+        -:   63:ASTNode *parse_classdef();
+        -:   64:ASTNode *parse_constructor();
+        -:   65:ASTNode *parse_methoddef();
+        -:   66:ASTNode *parse_stmt_list();
+        -:   67:ASTNode *parse_stmt();
+        -:   68:ASTNode *parse_vardec_stmt();
+        -:   69:ASTNode *parse_exp();
+        -:   70:ASTNode *parse_type();
+        -:   71:
+        -:   72:// program ::= classdef* stmt+
+        1:   73:ASTNode *parse_program() {
+        1:   74:    next_token_safe();
+        1:   75:    ASTNode *root = new_node("Program");
+        -:   76:
+        -:   77:    // zero or more classdefs
+        1:   78:    while (current.kind == TOKEN_LPAREN) {
+        4:   79:        int save = tokenizer.position;
+        4:   80:        Token tok = current;
+        4:   81:        next_token_safe();
+        4:   82:        if (current.kind == TOKEN_CLASS) {
+        3:   83:            tokenizer.position = save;
+        3:   84:            current            = tok;
+        3:   85:            add_child(root, parse_classdef());
+        -:   86:        } else {
+        1:   87:            tokenizer.position = save;
+        1:   88:            current            = tok;
+        1:   89:            break;
+        -:   90:        }
+        -:   91:    }
+        -:   92:
+        -:   93:    // at least one statement
+        1:   94:    if (!(current.kind == TOKEN_LPAREN ||
+    #####:   95:          current.kind == TOKEN_VARDEC ||
+    #####:   96:          current.kind == TOKEN_BREAK))
+    #####:   97:        parse_error("Expected at least one statement");
+        1:   98:    add_child(root, parse_stmt_list());
+        -:   99:
+        -:  100:    // make sure we really are at EOF
+        1:  101:    if (current.kind != TOKEN_UNKNOWN)
+    #####:  102:        parse_error("Extra tokens after program end");
+        -:  103:
+        1:  104:    return root;
+        -:  105:}
+        -:  106:
+        -:  107:// classdef ::= ( class classname [superclass] (vardec*) constructor methoddef* )
+        3:  108:ASTNode *parse_classdef() {
+        -:  109:    //“( class”
+        3:  110:    expect(TOKEN_LPAREN, "Expected '(' for classdef");
+        3:  111:    expect(TOKEN_CLASS,  "Expected 'class'");
+        3:  112:    ASTNode *n = new_node("ClassDef");
+        -:  113:
+        -:  114:    //classname
+        3:  115:    if (current.kind != TOKEN_IDENTIFIER)
+    #####:  116:        parse_error("Expected class name");
+        3:  117:    add_child(n, new_node(current.value));
+        3:  118:    next_token_safe();
+        -:  119:
+        -:  120:    //optional superclass
+        3:  121:    if (current.kind == TOKEN_IDENTIFIER) {
+        2:  122:        add_child(n, new_node(current.value));
+        2:  123:        next_token_safe();
+        -:  124:    }
+        -:  125:
+        -:  126:    //parse ONE group of fields: an outer “( … )” wrapping multiple vardecs
+        3:  127:    expect(TOKEN_LPAREN, "Expected '(' before field declarations");
+        -:  128:    //inside, each field begins with its own LPAREN
+        6:  129:    while (current.kind == TOKEN_LPAREN) {
+    #####:  130:        add_child(n, parse_vardec_stmt());
+        -:  131:    }
+        3:  132:    expect(TOKEN_RPAREN, "Expected ')' after field declarations");
+        -:  133:
+        -:  134:    //exactly one constructor
+        3:  135:    add_child(n, parse_constructor());
+        -:  136:
+        -:  137:    //zero or more methods
+        3:  138:    while (current.kind == TOKEN_LPAREN) {
+        6:  139:        int save_pos = tokenizer.position;
+        6:  140:        Token save_tok = current;
+        6:  141:        next_token_safe();
+        6:  142:        if (current.kind == TOKEN_METHOD) {
+        6:  143:            tokenizer.position = save_pos;
+        6:  144:            current = save_tok;
+        6:  145:            add_child(n, parse_methoddef());
+        -:  146:        } else {
+    #####:  147:            tokenizer.position = save_pos;
+    #####:  148:            current = save_tok;
+    #####:  149:            break;
+        -:  150:        }
+        -:  151:    }
+        -:  152:
+        -:  153:    //closing “)” of the class
+        3:  154:    expect(TOKEN_RPAREN, "Expected ')' after classdef");
+        3:  155:    return n;
+        -:  156:}
+        -:  157:
+        -:  158:
+        -:  159:// constructor ::= ( init (vardec*) [ (super exp*) ] stmt* )
+        3:  160:ASTNode *parse_constructor() {
+        3:  161:    expect(TOKEN_LPAREN, "Expected '(' for init");
+        3:  162:    expect(TOKEN_INIT,   "Expected 'init'");
+        3:  163:    ASTNode *n = new_node("Constructor");
+        -:  164:
+        3:  165:    expect(TOKEN_LPAREN, "Expected '(' before init params");
+        6:  166:    while (current.kind == TOKEN_VARDEC) {
+    #####:  167:        add_child(n, parse_vardec_stmt());
+        -:  168:    }
+        3:  169:    expect(TOKEN_RPAREN, "Expected ')' after init params");
+        -:  170:
+        -:  171:    // optional super call
+        3:  172:    if (current.kind == TOKEN_LPAREN) {
+        3:  173:        int save_pos = tokenizer.position;
+        3:  174:        Token save_tok = current;
+        3:  175:        next_token_safe();
+        3:  176:        if (current.kind == TOKEN_SUPER) {
+        2:  177:            ASTNode *sup = new_node("SuperCall");
+        2:  178:            next_token_safe();
+        6:  179:            while (current.kind == TOKEN_LPAREN ||
+        4:  180:                   current.kind == TOKEN_IDENTIFIER ||
+        2:  181:                   current.kind == TOKEN_INT_LITERAL) {
+    #####:  182:                add_child(sup, parse_exp());
+        -:  183:            }
+        2:  184:            expect(TOKEN_RPAREN, "Expected ')' after super");
+        2:  185:            add_child(n, sup);
+        -:  186:        } else {
+        1:  187:            tokenizer.position = save_pos;
+        1:  188:            current = save_tok;
+        -:  189:        }
+        -:  190:    }
+        -:  191:
+        -:  192:    // body stmts
+       15:  193:    while (current.kind == TOKEN_LPAREN ||
+        6:  194:           current.kind == TOKEN_VARDEC ||
+        3:  195:           current.kind == TOKEN_BREAK) {
+        6:  196:        add_child(n, parse_stmt());
+        -:  197:    }
+        3:  198:    expect(TOKEN_RPAREN, "Expected ')' after constructor");
+        3:  199:    return n;
+        -:  200:}
+        -:  201:
+        -:  202:// methoddef ::= ( method methodname (vardec*) type stmt* )
+        6:  203:ASTNode *parse_methoddef() {
+        6:  204:    expect(TOKEN_LPAREN, "Expected '(' for method");
+        6:  205:    expect(TOKEN_METHOD,"Expected 'method'");
+        6:  206:    if (current.kind != TOKEN_IDENTIFIER) parse_error("Expected method name");
+        6:  207:    ASTNode *n = new_node(current.value);
+        6:  208:    next_token_safe();
+        -:  209:
+        6:  210:    expect(TOKEN_LPAREN, "Expected '(' before method params");
+       12:  211:    while (current.kind == TOKEN_VARDEC) {
+    #####:  212:        add_child(n, parse_vardec_stmt());
+        -:  213:    }
+        6:  214:    expect(TOKEN_RPAREN, "Expected ')' after method params");
+        -:  215:
+        6:  216:    add_child(n, parse_type());
+        -:  217:
+       24:  218:    while (current.kind == TOKEN_LPAREN ||
+       12:  219:           current.kind == TOKEN_VARDEC ||
+        6:  220:           current.kind == TOKEN_BREAK) {
+        6:  221:        add_child(n, parse_stmt());
+        -:  222:    }
+        6:  223:    expect(TOKEN_RPAREN, "Expected ')' after method");
+        6:  224:    return n;
+        -:  225:}
+        -:  226:
+        -:  227:// vardec ::= ( vardec type var )
+        5:  228:ASTNode *parse_vardec_stmt() {
+        5:  229:    expect(TOKEN_LPAREN, "Expected '(' for vardec");
+        5:  230:    expect(TOKEN_VARDEC, "Expected 'vardec'");
+        5:  231:    ASTNode *n = new_node("VarDec");
+        5:  232:    add_child(n, parse_type());
+        5:  233:    if (current.kind != TOKEN_IDENTIFIER) parse_error("Expected var name");
+        5:  234:    add_child(n, new_node(current.value));
+        5:  235:    next_token_safe();
+        5:  236:    expect(TOKEN_RPAREN, "Expected ')' after vardec");
+        5:  237:    return n;
+        -:  238:}
+        -:  239:
+        -:  240:// stmt_list ::= stmt+
+        1:  241:ASTNode *parse_stmt_list() {
+        1:  242:    ASTNode *n = new_node("StmtList");
+        -:  243:    do {
+       10:  244:        add_child(n, parse_stmt());
+       11:  245:    } while (current.kind == TOKEN_LPAREN ||
+        2:  246:             current.kind == TOKEN_VARDEC ||
+       11:  247:             current.kind == TOKEN_BREAK);
+        1:  248:    return n;
+        -:  249:}
+        -:  250:
+        -:  251:// stmt ::= (vardec Type var) | break
+        -:  252://        | (= var exp) | (while …) | (if …) | (return …)
+        -:  253://        | (call …) | (println …)
+       26:  254:ASTNode *parse_stmt() {
+        -:  255:    // QUICK LOOKAHEAD FOR A VARDENC STATEMENT
+       26:  256:    if (current.kind == TOKEN_LPAREN) {
+       25:  257:        int save_pos = tokenizer.position;
+       25:  258:        Token save_tok = current;
+       25:  259:        next_token_safe();               // consume '('
+       25:  260:        if (current.kind == TOKEN_VARDEC) {
+        -:  261:            // rollback, then parse it properly
+        5:  262:            tokenizer.position = save_pos;
+        5:  263:            current = save_tok;
+        5:  264:            return parse_vardec_stmt();
+        -:  265:        }
+        -:  266:        // not a vardec; rewind for the normal LPAREN logic
+       20:  267:        tokenizer.position = save_pos;
+       20:  268:        current = save_tok;
+        -:  269:    }
+        -:  270:
+        -:  271:    // plain break
+       21:  272:    if (current.kind == TOKEN_BREAK) {
+        1:  273:        ASTNode *n = new_node("Break");
+        1:  274:        next_token_safe();
+        1:  275:        return n;
+        -:  276:    }
+        -:  277:
+        -:  278:    // everything else must start with '('
+       20:  279:    if (current.kind != TOKEN_LPAREN) {
+    #####:  280:        parse_error("Unrecognized statement");
+        -:  281:    }
+        -:  282:
+        -:  283:    // enter parenthesized statement
+       20:  284:    expect(TOKEN_LPAREN, "Expected '(' for statement");
+       20:  285:    TokenKind k = current.kind;
+       20:  286:    ASTNode *n = NULL;
+        -:  287:
+       20:  288:    if (k == TOKEN_SINGLE_EQUALS) {
+        5:  289:        next_token_safe();
+        5:  290:        n = new_node("Assign");
+        5:  291:        if (current.kind != TOKEN_IDENTIFIER)
+    #####:  292:            parse_error("Expected variable name after '='");
+        5:  293:        add_child(n, new_node(current.value));
+        5:  294:        next_token_safe();
+        5:  295:        add_child(n, parse_exp());
+        -:  296:
+       15:  297:    } else if (k == TOKEN_WHILE) {
+        1:  298:        next_token_safe();
+        1:  299:        n = new_node("While");
+        1:  300:        add_child(n, parse_exp());
+        -:  301:        // loop body
+        6:  302:        while (current.kind == TOKEN_LPAREN ||
+        2:  303:               current.kind == TOKEN_BREAK) {
+        2:  304:            add_child(n, parse_stmt());
+        -:  305:        }
+        -:  306:
+       14:  307:    } else if (k == TOKEN_IF) {
+        1:  308:        next_token_safe();
+        1:  309:        n = new_node("If");
+        1:  310:        add_child(n, parse_exp());
+        1:  311:        add_child(n, parse_stmt());
+        -:  312:        // optional else
+        1:  313:        if (current.kind == TOKEN_LPAREN ||
+    #####:  314:            current.kind == TOKEN_BREAK) {
+        1:  315:            add_child(n, parse_stmt());
+        -:  316:        }
+        -:  317:
+       13:  318:    } else if (k == TOKEN_RETURN) {
+        6:  319:        next_token_safe();
+        6:  320:        n = new_node("Return");
+        6:  321:        if (current.kind != TOKEN_RPAREN) {
+        5:  322:            add_child(n, parse_exp());
+        -:  323:        }
+        -:  324:
+        7:  325:    } else if (k == TOKEN_CALL) {
+        3:  326:        next_token_safe();
+        3:  327:        n = new_node("Call");
+        3:  328:        add_child(n, parse_exp());  // receiver
+        3:  329:        if (current.kind != TOKEN_IDENTIFIER)
+    #####:  330:            parse_error("Expected method name in call");
+        3:  331:        add_child(n, new_node(current.value));
+        3:  332:        next_token_safe();
+        6:  333:        while (current.kind != TOKEN_RPAREN) {
+    #####:  334:            add_child(n, parse_exp());
+        -:  335:        }
+        -:  336:
+        4:  337:    } else if (k == TOKEN_PRINT) {
+        4:  338:        next_token_safe();
+        4:  339:        n = new_node("Println");
+        4:  340:        add_child(n, parse_exp());
+        -:  341:
+        -:  342:    } else {
+    #####:  343:        parse_error("Unknown statement form");
+        -:  344:    }
+        -:  345:
+       20:  346:    expect(TOKEN_RPAREN, "Expected ')' after statement");
+       20:  347:    return n;
+        -:  348:}
+        -:  349:
+        -:  350:
+        -:  351:// exp ::= var | this | true | false | int | (println exp) | (op exp exp) | (call exp method exp*) | (new classname exp*)
+       28:  352:ASTNode *parse_exp() {
+       28:  353:    if (current.kind == TOKEN_IDENTIFIER) {
+        7:  354:        ASTNode *n = new_node(current.value);
+        7:  355:        next_token_safe();
+        7:  356:        return n;
+       21:  357:    } else if (current.kind == TOKEN_THIS) {
+    #####:  358:        ASTNode *n = new_node("this");
+    #####:  359:        next_token_safe();
+    #####:  360:        return n;
+       21:  361:    } else if (current.kind == TOKEN_TRUE) {
+        2:  362:        ASTNode *n = new_node("true");
+        2:  363:        next_token_safe();
+        2:  364:        return n;
+       19:  365:    } else if (current.kind == TOKEN_FALSE) {
+    #####:  366:        ASTNode *n = new_node("false");
+    #####:  367:        next_token_safe();
+    #####:  368:        return n;
+       19:  369:    } else if (current.kind == TOKEN_INT_LITERAL) {
+       10:  370:        ASTNode *n = new_node(current.value);
+       10:  371:        next_token_safe();
+       10:  372:        return n;
+        9:  373:    } else if (current.kind == TOKEN_LPAREN) {
+        9:  374:        expect(TOKEN_LPAREN, "Expected '(' for expression");
+        9:  375:        TokenKind k = current.kind;
+        9:  376:        ASTNode *n = NULL;
+        9:  377:        if (k == TOKEN_PRINT) {
+        3:  378:            next_token_safe();
+        3:  379:            n = new_node("Println");
+        3:  380:            add_child(n, parse_exp());
+        6:  381:        } else if (k == TOKEN_PLUS || k == TOKEN_MINUS ||
+        5:  382:                   k == TOKEN_MULT || k == TOKEN_DIV ||
+        6:  383:                   k == TOKEN_LESSTHAN || k == TOKEN_EQUALS) {
+        2:  384:            char lbl[3] = {0};
+        2:  385:            switch (k) {
+        1:  386:                case TOKEN_PLUS:     lbl[0] = '+'; break;
+    #####:  387:                case TOKEN_MINUS:    lbl[0] = '-'; break;
+    #####:  388:                case TOKEN_MULT:     lbl[0] = '*'; break;
+    #####:  389:                case TOKEN_DIV:      lbl[0] = '/'; break;
+        1:  390:                case TOKEN_LESSTHAN: lbl[0] = '<'; break;
+    #####:  391:                case TOKEN_EQUALS:   lbl[0] = '='; lbl[1] = '='; break;
+    #####:  392:                default: break;
+        -:  393:            }
+        2:  394:            next_token_safe();
+        2:  395:            n = new_node(lbl);
+        2:  396:            add_child(n, parse_exp());
+        2:  397:            add_child(n, parse_exp());
+        4:  398:        } else if (k == TOKEN_CALL) {
+        2:  399:            next_token_safe();
+        2:  400:            n = new_node("Call");
+        2:  401:            add_child(n, parse_exp());
+        2:  402:            if (current.kind != TOKEN_IDENTIFIER) parse_error("Expected method name in call expr");
+        2:  403:            add_child(n, new_node(current.value));
+        2:  404:            next_token_safe();
+        4:  405:            while (current.kind != TOKEN_RPAREN) {
+    #####:  406:                add_child(n, parse_exp());
+        -:  407:            }
+        2:  408:        } else if (k == TOKEN_NEW) {
+        2:  409:            next_token_safe();
+        2:  410:            if (current.kind != TOKEN_IDENTIFIER) parse_error("Expected class name in new expr");
+        2:  411:            n = new_node("New");
+        2:  412:            add_child(n, new_node(current.value));
+        2:  413:            next_token_safe();
+        4:  414:            while (current.kind != TOKEN_RPAREN) {
+    #####:  415:                add_child(n, parse_exp());
+        -:  416:            }
+        -:  417:        } else {
+    #####:  418:            parse_error("Unknown expression form");
+        -:  419:        }
+        9:  420:        expect(TOKEN_RPAREN, "Expected ')' after expression");
+        9:  421:        return n;
+        -:  422:    } else {
+    #####:  423:        parse_error("Unrecognized expression");
+        -:  424:    }
+    #####:  425:    return NULL;
+        -:  426:}
+        -:  427:
+        -:  428:// type ::= Int | Boolean | Void | classname
+       11:  429:ASTNode *parse_type() {
+       11:  430:    ASTNode *n = NULL;
+       11:  431:    if (current.kind == TOKEN_INT) {
+        3:  432:        n = new_node("Int");
+        8:  433:    } else if (current.kind == TOKEN_BOOL) {
+        2:  434:        n = new_node("Boolean");
+        6:  435:    } else if (current.kind == TOKEN_VOID) {
+        4:  436:        n = new_node("Void");
+        2:  437:    } else if (current.kind == TOKEN_IDENTIFIER) {
+        2:  438:        n = new_node(current.value);
+        -:  439:    } else {
+    #####:  440:        parse_error("Expected type");
+        -:  441:    }
+       11:  442:    next_token_safe();
+       11:  443:    return n;
+        -:  444:}
